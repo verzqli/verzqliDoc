@@ -69,5 +69,64 @@ s2 ="ab",n2 = 2
 
 有些读者可能会怀疑循环节是否一定存在，这里我们给出的答案是肯定的，根据[鸽笼原理](https://baike.baidu.com/item/鸽笼)，我们最多只要找过 `|s2| + 1`个 `s1`，就一定会出现循环节。
 
+```java
+class Solution {
+    public int getMaxRepetitions(String s1, int n1, String s2, int n2) {
+        if(n1==0) return 0;
+        char[] c1 = s1.toCharArray();
+        char[] c2 = s2.toCharArray();
+        int l1 = s1.length();
+        int l2 = s2.length();
+        int couts1=0;s//经历多少s1
+        int couts2=0;//经历多少s2
+        int p=0;//当前在s2的位置
+        Map<Integer,int[]> mp = new HashMap<>();//记录每一次s1扫描结束后当前的状态，寻找循环
+        while(couts1<n1){
+            for(int i=0;i<l1;i++){
+                if(c1[i]==c2[p]){//往前
+                    p++;
+                    if(p==l2){//s2扫描结束从头开始循环
+                        p=0;
+                        couts2++;
+                    }
+                }
+            }
+            couts1++;
+            if(!mp.containsKey(p)){
+                mp.put(p,new int[]{couts1,couts2});//记录当前状态
+                
+            }
+            else{//出现了循环 这次结束后p的位置和以前某一次一样，就是循环
+                int[] last =mp.get(p);
+                int circle1= couts1-last[0];
+                int circle2= couts2-last[1];
+                couts2 += circle2*((n1-couts1)/circle1);
+                couts1 = couts1+((n1-couts1)/circle1)*circle1;//更新新他们
+            }
+        }
+        return couts2/n2;
+    }
+}
+
+couts2 += circle2*((n1-couts1)/circle1);
+couts1 = couts1+((n1-couts1)/circle1)*circle1;
+解释一下这两行代码什么意思：
+我们进入这个代码快的前提是出现循环，
+也就是说这一次扫描s1结束的时候，p的位置，也就是S2的位置和之前一次相同，现在我们算差值：
+int circle1= couts1-last[0];表示两次位置经历的多少s1
+int circle2= couts2-last[1];表示两次位置经历的多少s2
+假如经历过三个s1和两个s2，那么可以表示：
+三个s1可以换两个s2，这就是一个循环
+也就是：
+circle1=3
+circle2=2
+所以(n1-couts1)/circle1表示剩下的还有几个循环
+((n1-couts1)/circle1)circle1表示 循环的个数每个循环有多少s2
+couts1 = couts1+((n1-couts1)/circle1)circle1;表示很显然，加起来之前走过的s2
+couts2 += circle2((n1-couts1)/circle1);表示加所有循环经历的s1
+
+链接：https://leetcode-cn.com/problems/count-the-repetitions/solution/java-1msxiang-xi-zhu-shi-by-feixiang-4/
+```
+
 
 
