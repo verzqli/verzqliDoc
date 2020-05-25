@@ -1,0 +1,127 @@
+#### 题目：[76. 最小覆盖子串](https://leetcode-cn.com/problems/minimum-window-substring/)
+
+> 给你一个字符串 S、一个字符串 T，请在字符串 S 里面找出：包含 T 所有字符的最小子串。
+>
+> **说明：**
+>
+> - 如果 S 中不存这样的子串，则返回空字符串 `""`。
+> - 如果 S 中存在这样的子串，我们保证它是唯一的答案
+> - 注意，这里的T中的字符是会重复的，面试的时候记住要问清楚字符有没有重复问题。
+
+#### 示例
+
+```java
+输入: S = "ADOBECODEBANC", T = "ABC"
+输出: "BANC"
+```
+
+| 难度 | 初见 | 复习1次 | 复习2次 | 复习3次 | 复习4次 |
+| :--: | :--: | :-----: | :-----: | :-----: | :-----: |
+| 困难 |  ✖   |         |         |         |         |
+
+#### 分析
+
+这期的[题解视频讲得不错](https://leetcode-cn.com/problems/minimum-window-substring/solution/zui-xiao-fu-gai-zi-chuan-by-leetcode-solution/)
+
+**在寻找字符串子串这一系列的题目中，基本都是采用滑动窗口+Map的方式来做的。字符可以用数组的形式来做，把字符的ASCII值当做数组下标。**
+
+因为要寻找包含T的最小子串，所以子串的最小长度为``tLength``,所以从S的``tLength``开始遍历。
+
+开始遍历后，当遍历的字符串长度``[left,right]``包含了T中所有的字符后，left++，直到祛除了一个字符后，滑动窗口内的子串比T中少了一个字符后，right++。就这样遍历到结尾。
+
+如下面例子
+
+#### S=DBADBECCODEBANCC
+
+#### T=ABCC
+
+S从长度为4开始向右遍历。
+
+#### S=[DBADBECC]ODEBANCC
+
+当遍历到方框内时，我们可以看到刚好包含了T中所有的字符，记录长度8，这时候从left开始向右遍历
+
+#### S=DBA[DBECC]ODEBANCC
+
+遍历到A发现，去除了A之后子串就不再完整的包含T了，所以在去除A之前记录下此时的长度6，然后right++，后面遍历方式相似。
+
+#### S=DBA[DBECCODEBA]NCC
+
+#### S=DBADBEC[CODEBA]NCC
+
+#### S=DBADBEC[CODEBANC]C
+
+#### S=DBADBECC[ODEBANC]C
+
+#### S=DBADBECC[ODEBANCC]
+
+#### S=DBADBECCODE[BANCC]
+
+最后因为已经到达右边界了，所以不用去除B了，然后对比可以得出最小长度就是5。
+
+这里还有一个需要比较的是怎么对比窗口内的子串中是否包含了T中所有的字符，因为这里字符是可以重复的,所以我们需要借助map来操作。但因为这里是字符，我们知道字符是对应ASCII中的数字的，所以我们可以用一个128长度的数组来代替map操作。
+
+这里最妙的设定就是这个count和针对count的判断比较来判定窗口字符是否全部包含s和窗口字符左端向右滑动时是否到达了临界点。
+
+```java
+public String minWindow(String s, String t) {
+        if (s.length() < t.length()) {
+            return "";
+        }
+        //记录t字符串的字符情况和数量。
+        int[] target = new int[128];
+        //记录滑动窗口内的字符情况和数量。
+        int[] window = new int[128];
+        for (int i = 0; i < t.length(); i++) {
+            target[t.charAt(i)]++;
+        }
+        int left = 0, right = 0;
+        //记录当前窗口内有多少个t中的字符，例如窗口=BADDC  t=ADM
+        // 此时就是2，不会因为两个D而多1。
+        int count = 0;
+        int minLength = s.length() + 1;
+        //最短字符串的开头。
+        int begin = 0;
+        while (right < s.length()) {
+            char c = s.charAt(right);
+            //记录下窗口内的字符情况和数量。
+            window[c]++;
+            //如果目标s内有这个c这个字符，且这个字符数量比窗口内的多时，才算匹配到了一个，
+            // 注意这里有等于判断是因为前面先做了 window[c]++;，已经加1数量了。
+            if (target[c] > 0 && target[c] >= window[c]) {
+                count++;
+            }
+            //如果窗口内的字符已经完全包含了s的字符时，就要从left开始删除头。
+            while (count == t.length()) {
+                c = s.charAt(left);
+                //如果目标中包含这个字符，且这个字符target中比window多余或者等于时才算达到目标
+                //例如 CCCCCCCAB   ABC  这里需要left加到最后一个C时，才算遍历到头，前面减去的那些C都不算
+                if (target[c] > 0 && target[c] >= window[c]) {
+                    count--;
+                    if (right - left + 1 < minLength) {
+                        minLength = right - left + 1;
+                        begin = left;
+                    }
+                }
+                //减去例子中C的数量,注意，这里最后一个C也要减去，是为了right向后加寻找新的C
+                window[c]--;
+                left++;
+            }
+            right++;
+        }
+        //前面设置了一个不可能的值，如果遍历完成还是这个值，说明没找到子串
+        if (minLength == s.length() + 1) {
+            return "";
+        } else {
+            return s.substring(begin, begin + minLength);
+        }
+    }
+```
+
+#### 复杂度
+
+- 时间复杂度:$O(N)$
+- 空间复杂度:$O(N)$
+
+
+
