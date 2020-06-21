@@ -1,0 +1,83 @@
+#### 题目：[1487. 保证文件名唯一](https://leetcode-cn.com/problems/making-file-names-unique/)
+
+> 给你一个长度为 n 的字符串数组 names 。你将会在文件系统中创建 n 个文件夹：在第 i 分钟，新建名为 names[i] 的文件夹。
+>
+> 由于两个文件 不能 共享相同的文件名，因此如果新建文件夹使用的文件名已经被占用，系统会以 (k) 的形式为新文件夹的文件名添加后缀，其中 k 是能保证文件名唯一的 最小正整数 。
+>
+> 返回长度为 n 的字符串数组，其中 ans[i] 是创建第 i 个文件夹时系统分配给该文件夹的实际名称。
+>
+
+#### 示例
+
+```java
+输入：names = ["pes","fifa","gta","pes(2019)"]
+输出：["pes","fifa","gta","pes(2019)"]
+解释：文件系统将会这样创建文件名：
+"pes" --> 之前未分配，仍为 "pes"
+"fifa" --> 之前未分配，仍为 "fifa"
+"gta" --> 之前未分配，仍为 "gta"
+"pes(2019)" --> 之前未分配，仍为 "pes(2019)
+```
+
+```java
+输入：names = ["onepiece","onepiece(1)","onepiece(2)","onepiece(3)","onepiece"]
+输出：["onepiece","onepiece(1)","onepiece(2)","onepiece(3)","onepiece(4)"]
+解释：当创建最后一个文件夹时，最小的正有效 k 为 4 ，文件名变为 "onepiece(4)"。
+```
+
+```java
+输入：names = ["kaido","kaido(1)","kaido","kaido(1)"]
+输出：["kaido","kaido(1)","kaido(2)","kaido(1)(1)"]
+解释：注意，如果含后缀文件名被占用，那么系统也会按规则在名称后添加新的后缀 (k) 。
+
+```
+
+
+
+| 难度 | 初见 | 复习1次 | 复习2次 | 复习3次 | 复习4次 |
+| :--: | :--: | :-----: | :-----: | :-----: | :-----: |
+| 中等 |  √   |         |         |         |         |
+
+#### 分析
+
+这题主要注意两点：
+
+- 当前面出现a,a(1)时，下一个a，要变成a(2)
+- 当前面出现a,a时，因为第2个a最后是变成了a(1)的，所以下一个a(1)就要变成a(1)(1)
+
+```java
+ public String[] getFolderNames(String[] names) {
+        Map<String, Integer> map = new HashMap<>();
+        String[] result = new String[names.length];
+        for (int i = 0; i < names.length; i++) {
+            if (map.containsKey(names[i])) {
+                int count = map.getOrDefault(names[i], 0) + 1;
+                String newStr = names[i] + "(" + (count - 1) + ")";
+                //当新的字符串在map中也有时，就是上面的第一种情况，前两个分别是a和a(1)
+                //这里的newStr也是a(1),所以我们循环count，直到累加到map中不存在即可
+                if (map.containsKey(newStr)) {
+                    while (map.containsKey(newStr)) {
+                        count++;
+                        newStr = names[i] + "(" + (count - 1) + ")";
+                    }
+                }
+                //记录当前字符串的数量
+                map.put(names[i], count);
+                //记录新字符串数量，肯定是1.
+                map.put(newStr, 1);
+                result[i] = newStr;
+            } else {
+                map.put(names[i], 1);
+                result[i] = names[i];
+            }
+        }
+        return result;
+    }
+```
+
+
+
+#### 复杂度
+
+- 时间复杂度:$O(N)$ 这个时间复杂度不太清楚，但应该是O(N)，因为有count存在，while循环只有很少的情况且为第一次的情况下才会遍历很多。
+- 空间复杂度:$O(N)$ 当，字符串全部不相同时，最大空间为O(N)
