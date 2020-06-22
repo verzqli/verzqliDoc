@@ -731,5 +731,5 @@ Retrofit 创建的时候指定了 request 的接口地址，然后调用 retrofi
 
   借用一张图
 
-  ![图库/Retrofit源码解析.webp](Retrofit源码解析.webp)
+  ![](图库/Retrofit源码解析.webp)
 
