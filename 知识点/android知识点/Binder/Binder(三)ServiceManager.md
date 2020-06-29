@@ -299,7 +299,8 @@ private final long mNativeData;
                   if (status == DEAD_OBJECT)
                      return nullptr;
               }
-  			//当handle值所对应的IBinder不存在或弱引用无效时，则创建BpBinder对象
+  			//当handle值所对应的IBinder不存在或弱引用无效时，则创建BpBinder对象，这个handler为0的其实就是binder_context_mgr_node对象
+              //也就是native端的ServiceManager
               b = BpBinder::create(handle);
               e->binder = b;
               if (b) e->refs = b->getWeakRefs();
@@ -312,7 +313,7 @@ private final long mNativeData;
               e->refs->decWeak(this);
           }
       }
-  	//返回BpBinder对象
+  	//返回BpBinder对象，
       return result;
   }
   ```
@@ -453,7 +454,7 @@ private final long mNativeData;
   - ##### android_os_Parcel_writeStrongBinder
 
     > framework/base/core/jni/android_os_Parcel.cpp
-  
+
   ```c++
   
     static void android_os_Parcel_writeStrongBinder(JNIEnv* env, jclass clazz, jlong nativePtr, jobject object)
@@ -467,9 +468,9 @@ private final long mNativeData;
         }
     }
   ```
+
   
-  
-  
+
   - ##### ibinderForJavaObject
 
     > framework/base/core/jni/android_util_Binder.cpp
@@ -484,6 +485,7 @@ private final long mNativeData;
         // 如果是Java层的Binder对象，这里我们要注册一个服务，并不是代理
         if (env->IsInstanceOf(obj, gBinderOffsets.mClass)) {
             JavaBBinderHolder* jbh = (JavaBBinderHolder*)
+               // gBinderOffsets.mObject 持有Java层Binder字段mObject的句柄
                 env->GetLongField(obj, gBinderOffsets.mObject);
           //  get() 返回一個JavaBBinder，继承自BBinder
             return jbh->get(env, obj);
@@ -492,13 +494,14 @@ private final long mNativeData;
         // Instance of BinderProxy?
         // 如果是Java层的BinderProxy对象
         if (env->IsInstanceOf(obj, gBinderProxyOffsets.mClass)) {
-             //返回一个BinderProxy的NativeData数据中的，mObject是它的地址值
+             //返回一个BinderProxy的NativeData数据中的，mObject是它的地址值,这个前面已经设置好了，就是BpBinder
             return getBPNativeData(env, obj)->mObject;
         }
     
         ALOGW("ibinderForJavaObject: %p is not a Binder object", obj);
         return NULL;
     }
+    //jbh->get(env, obj);
     sp<JavaBBinder> get(JNIEnv* env, jobject obj)
     {
         AutoMutex _l(mLock);
@@ -534,10 +537,172 @@ private final long mNativeData;
     }
     ```
 
-    根据Binde(Java)生成JavaBBinderHolder(C++)对象. 主要工作是创建JavaBBinderHolder对象,并把JavaBBinderHolder对象地址保存到Binder.mObject成员变量.
+    gBinderOffsets.mObject中在binder初始化的时候保存了JavaBBinderHolder
 
-    创建JavaBBinder，该对象继承于BBinder对象。
+    ![image-20200629161136834](图库/image-20200629161136834.png)
 
-    data.writeStrongBinder(service)最终等价于`parcel->writeStrongBinder(new JavaBBinder(env, obj))`;
+    ![image-20200629161226120](图库/image-20200629161226120.png)
 
-    
+    可以看到在Binder被创建的时候就创建了一个JavaBBinderHolder保存在Binder的mObject中，这里通过获得JavaBBinderHolder后在调用get生成JavaBBinder。JavaBBinder是继承于BBinder的。
+
+    至于后面的BinderProxy可以很明显从前面知道是BpBinder。
+
+    所以这里就是根据是Binder还是Bidner代理来返回BBinder或BpBiner。
+
+    data.writeStrongBinder(service)最终等价于`parcel->writeStrongBinder(new JavaBBinder(env, obj))`;或
+
+    data.writeStrongBinder(service)最终等价于`parcel->writeStrongBinder(BpBinder)`;
+
+- ### writeStrongBinder(C++)
+
+  > framework/base/core/jni/android_util_Binder.cpp
+
+  ```c++
+  status_t Parcel::writeStrongBinder(const sp<IBinder>& val)
+  {
+      return flatten_binder(ProcessState::self(), val, this);
+  }
+  ```
+
+  - #### flatten_binder
+
+  ```java
+  status_t flatten_binder(const sp<ProcessState>& /*proc*/,
+      const sp<IBinder>& binder, Parcel* out)
+  {
+      flat_binder_object obj;
+  	//判断是否禁用后台调度，设置优先级
+      if (IPCThreadState::self()->backgroundSchedulingDisabled()) {
+          /* minimum priority for all nodes is nice 0 */
+          obj.flags = FLAT_BINDER_FLAG_ACCEPTS_FDS;
+      } else {
+          /* minimum priority for all nodes is MAX_NICE(19) */
+          obj.flags = 0x13 | FLAT_BINDER_FLAG_ACCEPTS_FDS;
+      }
+      if (binder != nullptr) {
+    //这里的binder就是前面我们传过来的BBinder或者BpBinder
+     /**
+       * BBinder* BBinder::localBinder()
+       * {
+       *     return this;
+       * }
+       *
+       * BBinder* IBinder::localBinder()
+       * {
+       *     return NULL;
+       * }
+       */
+          BBinder *local = binder->localBinder();
+          if (!local) {
+  
+              BpBinder *proxy = binder->remoteBinder();//remoteBinder()返回的是this
+              if (proxy == nullptr) {
+                  ALOGE("null proxy");
+              }
+              const int32_t handle = proxy ? proxy->handle() : 0;
+              obj.hdr.type = BINDER_TYPE_HANDLE;
+              obj.binder = 0; /* Don't pass uninitialized stack data to a remote process */
+              obj.handle = handle;
+              obj.cookie = 0;
+          } else {
+              if (local->isRequestingSid()) {
+                  obj.flags |= FLAT_BINDER_FLAG_TXN_SECURITY_CTX;
+              }
+              obj.hdr.type = BINDER_TYPE_BINDER;
+              obj.binder = reinterpret_cast<uintptr_t>(local->getWeakRefs());
+              obj.cookie = reinterpret_cast<uintptr_t>(local);
+          }
+      } else {
+          obj.hdr.type = BINDER_TYPE_BINDER;
+          obj.binder = 0;
+          obj.cookie = 0;
+      }
+  
+      return finish_flatten_binder(binder, obj, out);
+  }
+  
+  inline static status_t finish_flatten_binder(
+      const sp<IBinder>& /*binder*/, const flat_binder_object& flat, Parcel* out)
+  {
+      return out->writeObject(flat, false);
+  }
+  
+  // flat_binder_object结构体
+  /*
+   * This is the flattened representation of a Binder object for transfer
+   * between processes.  The 'offsets' supplied as part of a binder transaction
+   * contains offsets into the data where these structures occur.  The Binder
+   * driver takes care of re-writing the structure type and data as it moves
+   * between processes.
+   */
+  struct flat_binder_object {
+      struct binder_object_header hdr;
+      __u32               flags;
+  
+      /* 8 bytes of data. */
+      union {
+          binder_uintptr_t    binder; /* local object */
+          __u32           handle; /* remote object */
+      };
+  
+      /* extra data associated with local object */
+      binder_uintptr_t    cookie;
+  };
+  ```
+
+  将Binder对象扁平化，转换成flat_binder_object对象。
+
+  - 对于Binder实体，则cookie记录Binder实体的指针；
+  - 对于Binder代理，则用handle记录Binder代理的句柄；
+
+  再回到addService过程，则接下来进入transact。
+
+  
+
+- ###  BinderProxy.transact
+
+  ```java
+  public boolean transact(int code, Parcel data, Parcel reply, int flags) throws RemoteException {
+      //用于检测Parcel大小是否大于800k
+      Binder.checkParcel(this, code, data, "Unreasonably large binder buffer");
+      return transactNative(code, data, reply, flags); //【见3.8】
+  }
+  ```
+
+  回到ServiceManagerProxy.addService，其成员变量mRemote是BinderProxy。transactNative经过jni调用，进入下面的方法
+
+- ### android_os_BinderProxy_transact
+
+  > framework/base/core/jni/android_util_Binder.cpp
+
+  ```c++
+  static jboolean android_os_BinderProxy_transact(JNIEnv* env, jobject obj,
+          jint code, jobject dataObj, jobject replyObj, jint flags) // throws RemoteException
+  {
+     ...
+   	//java Parcel转为native Parcel
+      Parcel* data = parcelForJavaObject(env, dataObj);
+      Parcel* reply = parcelForJavaObject(env, replyObj);
+  	//获得BinderProxy里面NativeData保存的BpBinder(0);
+      IBinder* target = getBPNativeData(env, obj)->mObject.get();
+      if (target == NULL) {
+          jniThrowException(env, "java/lang/IllegalStateException", "Binder has been finalized!");
+          return JNI_FALSE;
+      }
+  	...
+      //最后是BpBinder调用transact方法
+      status_t err = target->transact(code, *data, reply, flags);
+      //if (reply) printf("Transact from Java code to %p received: ", target); reply->print();
+  	...
+      return JNI_FALSE;
+  }
+  
+  ```
+
+  Java层的BinderProxy.transact()最终交由Native层的BpBinder::transact()完成。Native Binder的[注册服务(addService)](http://gityuan.com/2015/11/14/binder-add-service/)中有详细说明BpBinder执行过程。另外，该方法可抛出RemoteException。
+
+  
+
+  
+
+  
