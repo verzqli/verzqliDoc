@@ -27,7 +27,7 @@ https://blog.csdn.net/zbunix/article/details/8758631
 
 ### 1.BpBinder::transact
 
-	> frameworks/native/libs/binder/BpBinder.cpp
+> frameworks/native/libs/binder/BpBinder.cpp
 
   ```c++
 status_t BpBinder::transact(
