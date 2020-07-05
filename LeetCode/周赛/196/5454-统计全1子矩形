@@ -1,0 +1,96 @@
+#### 题目：[5454. 统计全 1 子矩形](https://leetcode-cn.com/problems/count-submatrices-with-all-ones/)
+
+> 给你一个只包含 0 和 1 的 `rows * columns` 矩阵 `mat` ，请你返回有多少个 **子矩形** 的元素全部都是 1 。
+
+#### 示例
+
+```java
+输入：mat = [[1,0,1],
+            [1,1,0],
+            [1,1,0]]
+输出：13
+解释：
+有 6 个 1x1 的矩形。
+有 2 个 1x2 的矩形。
+有 3 个 2x1 的矩形。
+有 1 个 2x2 的矩形。
+有 1 个 3x1 的矩形。
+矩形数目总共 = 6 + 2 + 3 + 1 + 1 = 13 。
+
+```
+
+```java
+输入：mat = [[0,1,1,0],
+            [0,1,1,1],
+            [1,1,1,0]]
+输出：24
+解释：
+有 8 个 1x1 的子矩形。
+有 5 个 1x2 的子矩形。
+有 2 个 1x3 的子矩形。
+有 4 个 2x1 的子矩形。
+有 2 个 2x2 的子矩形。
+有 2 个 3x1 的子矩形。
+有 1 个 3x2 的子矩形。
+矩形数目总共 = 8 + 5 + 2 + 4 + 2 + 2 + 1 = 24 。
+
+```
+
+
+
+| 难度 | 初见 | 复习1次 | 复习2次 | 复习3次 | 复习4次 |
+| :--: | :--: | :-----: | :-----: | :-----: | :-----: |
+| 中等 |  ✖   |         |         |         |         |
+
+#### 分析
+
+这题除了复杂的动态规划，就是下面这种位运算的。
+
+[位运算题解](https://leetcode-cn.com/problems/count-submatrices-with-all-ones/solution/shi-yong-yu-yun-suan-fu-javashuang-bai-by-mp1256/)
+
+![image-20200705222450460](图库/5454-统计全1子矩形/image-20200705222450460.png)
+
+```java
+class Solution {
+    public int numSubmat(int[][] mat) {
+        int result = 0;
+        for (int i = 0; i < mat.length; i++) {
+            int[] nums = new int[mat[i].length];
+            System.arraycopy(mat[i], 0, nums, 0, mat[i].length);
+
+            result += getRes(nums);
+
+            for (int j = i + 1; j < mat.length; j++) {
+                for (int k = 0; k < mat[j].length; ++k) {
+                    nums[k] = nums[k] & mat[j][k];
+                }
+                result += getRes(nums);
+            }
+        }
+        return result;
+    }
+
+    //计算1行
+    public int getRes(int[] nums) {
+        int result = 0;     //结果
+        int continuous = 0;  //连续出现的1的个数
+        for (int num : nums) {
+            if (num == 0) {
+                result += continuous * (continuous + 1) / 2;
+                continuous = 0;
+            } else {
+                continuous++;
+            }
+        }
+        result += continuous * (continuous + 1) / 2;
+        return result;
+    }
+}
+```
+
+
+
+#### 复杂度
+
+- 时间复杂度:$O(N^2)$
+- 空间复杂度:$O(N)$
