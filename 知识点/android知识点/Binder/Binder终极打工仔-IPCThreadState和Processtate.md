@@ -197,7 +197,7 @@ protected:
 
 ### IPCThreadState
 
-IPCThreadState是真正干货的类，Binder代理类调用transact()方法，真正工作还是交给IPCThreadState来进行transact工作。先来 看看IPCThreadState::self的过程。
+IPCThreadState是真正干活的类，Binder代理类调用transact()方法，真正工作还是交给IPCThreadState来进行transact工作。先来 看看IPCThreadState::self的过程。
 
 ####  IPCThreadState::self()
 
@@ -592,6 +592,215 @@ Binder主线程的创建是在其所在进程创建的过程一起创建的，�
         mProcess->spawnPooledThread(false);
         break;
 ```
+
+#### IPCThreadState::transact
+
+上面的过程是server进程等待被访问的过程。
+
+transact则是client进程通过driver主动去访问的过程
+
+```c++
+status_t IPCThreadState::transact(int32_t handle,
+                                  uint32_t code, const Parcel& data,
+                                  Parcel* reply, uint32_t flags)
+{
+    status_t err;
+
+    flags |= TF_ACCEPT_FDS;
+
+  ...
+    // 传输数据,向Parcel数据类型的mOut写入数据
+    err = writeTransactionData(BC_TRANSACTION, flags, handle, code, data, nullptr);
+	//数据错误检查
+    if (err != NO_ERROR) {
+        if (reply) reply->setError(err);
+        return (mLastError = err);
+    }
+
+    if ((flags & TF_ONE_WAY) == 0) {
+      ...
+        if (reply) {
+            err = waitForResponse(reply);
+        } else {
+            Parcel fakeReply;
+            err = waitForResponse(&fakeReply);
+        }
+      ...
+    } else {
+        err = waitForResponse(nullptr, nullptr);
+    }
+
+    return err;
+
+```
+
+transact主要过程:
+
+- 先执行writeTransactionData()已向Parcel数据类型的`mOut`写入数据，此时`mIn`还没有数据；
+- 然后执行waitForResponse()方法，循环执行，直到收到应答消息. 调用talkWithDriver()跟驱动交互，收到应答消息，便会写入`mIn`, 则根据收到的不同响应吗，执行相应的操作。
+
+此处调用waitForResponse根据是否有设置`TF_ONE_WAY`的标记:
+
+- 当已设置oneway时, 则调用waitForResponse(NULL, NULL);
+- 当未设置oneway时, 则调用waitForResponse(reply) 或 waitForResponse(&fakeReply)
+
+#### IPCThreadState::writeTransactionData
+
+```c++
+status_t IPCThreadState::writeTransactionData(int32_t cmd, uint32_t binderFlags,
+    int32_t handle, uint32_t code, const Parcel& data, status_t* statusBuffer)
+{
+    binder_transaction_data tr;
+
+    tr.target.ptr = 0; /* Don't pass uninitialized stack data to a remote process */
+    tr.target.handle = handle; //指向目标handler，如果是注册服务，那么这里就是ams
+    tr.code = code;// START_SERVICE_TRANSACTION等等这些code
+    tr.flags = binderFlags;
+    tr.cookie = 0;
+    tr.sender_pid = 0;
+    tr.sender_euid = 0;
+
+    const status_t err = data.errorCheck();
+    if (err == NO_ERROR) {
+        //跨进程通信的传输数据
+         // mDataSize
+        tr.data_size = data.ipcDataSize();
+        // mData指针
+        tr.data.ptr.buffer = data.ipcData();
+        //mObjectsSize
+        tr.offsets_size = data.ipcObjectsCount()*sizeof(binder_size_t);
+        //mObjects指针
+        tr.data.ptr.offsets = data.ipcObjects();
+    } else if (statusBuffer) {
+        tr.flags |= TF_STATUS_CODE;
+        *statusBuffer = err;
+        tr.data_size = sizeof(status_t);
+        tr.data.ptr.buffer = reinterpret_cast<uintptr_t>(statusBuffer);
+        tr.offsets_size = 0;
+        tr.data.ptr.offsets = 0;
+    } else {
+        return (mLastError = err);
+    }
+	//cmd = BC_TRANSACTION
+    mOut.writeInt32(cmd);
+    //写入binder_transaction_data数据
+    mOut.write(&tr, sizeof(tr));
+
+    return NO_ERROR;
+}
+
+```
+
+这一步的目的是将数据写入``mOut``
+
+#### IPCThreadState::waitForResponse
+
+```c++
+status_t IPCThreadState::waitForResponse(Parcel *reply, status_t *acquireResult)
+{
+    int32_t cmd;
+    int32_t err;
+
+    while (1) {
+        if ((err=talkWithDriver()) < NO_ERROR) break; 
+        err = mIn.errorCheck();
+        if (err < NO_ERROR) break; //当存在error则退出循环
+
+         //每当跟Driver交互一次，若mIn收到数据则往下执行一次BR命令
+        if (mIn.dataAvail() == 0) continue;
+
+        cmd = mIn.readInt32();
+
+        switch (cmd) {
+        case BR_TRANSACTION_COMPLETE:
+            //只有当不需要reply, 也就是oneway时 才会跳出循环,否则还需要等待.
+            if (!reply && !acquireResult) goto finish; break;
+
+        case BR_DEAD_REPLY:
+            err = DEAD_OBJECT;         goto finish;
+        case BR_FAILED_REPLY:
+            err = FAILED_TRANSACTION;  goto finish;
+        case BR_REPLY: ...             goto finish;
+
+        default:
+            err = executeCommand(cmd); 
+            if (err != NO_ERROR) goto finish;
+            break;
+        }
+    }
+
+finish:
+    if (err != NO_ERROR) {
+        if (reply) reply->setError(err); //将发送的错误代码返回给最初的调用者
+    }
+    return err;
+}
+```
+
+在这个过程中, 收到以下任一BR_命令，处理后便会退出waitForResponse()的状态:
+
+- BR_TRANSACTION_COMPLETE: binder驱动收到BC_TRANSACTION事件后的应答消息; 对于oneway transaction,当收到该消息,则完成了本次Binder通信;
+- BR_DEAD_REPLY: 回复失败，往往是线程或节点为空. 则结束本次通信Binder;
+- BR_FAILED_REPLY:回复失败，往往是transaction出错导致. 则结束本次通信Binder;
+- BR_REPLY: Binder驱动向Client端发送回应消息; 对于非oneway transaction时,当收到该消息,则完整地完成本次Binder通信;
+
+#### IPCThreadState::talkWithDriver
+
+```c++
+//mOut是定义在IPCThreadState.h中的Parcel数据，在writeTransactionData方法中我们已经将要传输的数据写  //入了mOut
+//mOut有数据，mIn还没有数据。doReceive默认值为true
+status_t IPCThreadState::talkWithDriver(bool doReceive)
+{
+    binder_write_read bwr;
+
+    const bool needRead = mIn.dataPosition() >= mIn.dataSize();
+    const size_t outAvail = (!doReceive || needRead) ? mOut.dataSize() : 0;
+
+    bwr.write_size = outAvail;
+    bwr.write_buffer = (uintptr_t)mOut.data();
+
+    if (doReceive && needRead) {
+        //接收数据缓冲区信息的填充。当收到驱动的数据，则写入mIn
+        bwr.read_size = mIn.dataCapacity();
+        bwr.read_buffer = (uintptr_t)mIn.data();
+    } else {
+        bwr.read_size = 0;
+        bwr.read_buffer = 0;
+    }
+
+    // 当同时没有输入和输出数据则直接返回
+    if ((bwr.write_size == 0) && (bwr.read_size == 0)) return NO_ERROR;
+
+    bwr.write_consumed = 0;
+    bwr.read_consumed = 0;
+    status_t err;
+    do {
+        //ioctl执行binder读写操作，经过syscall，进入Binder驱动。调用Binder_ioctl【小节3.1】
+        if (ioctl(mProcess->mDriverFD, BINDER_WRITE_READ, &bwr) >= 0)
+            err = NO_ERROR;
+        else
+            err = -errno;
+        ...
+    } while (err == -EINTR);
+
+    if (err >= NO_ERROR) {
+        if (bwr.write_consumed > 0) {
+            if (bwr.write_consumed < mOut.dataSize())
+                mOut.remove(0, bwr.write_consumed);
+            else
+                mOut.setDataSize(0);
+        }
+        if (bwr.read_consumed > 0) {
+            mIn.setDataSize(bwr.read_consumed);
+            mIn.setDataPosition(0);
+        }
+        return NO_ERROR;
+    }
+    return err;
+}
+```
+
+
 
 ### 总结
 

@@ -92,3 +92,38 @@ struct svcinfo
 
 ```
 
+```c++
+struct binder_transaction_data {
+    union {
+        // 当binder_transaction_data是由用户空间的进程发送给Binder驱动时，
+        // handle是该事务的发送目标在Binder驱动中的信息，即该事务会交给handle来处 理；
+        size_t  handle; 
+                       
+        // handle的值是目标在Binder驱动中的Binder引用。
+        // 当binder_transaction_data是有Binder驱动反馈给用户空间进程时，
+        // ptr是该事务的发送目标在用户空间中的信息，即该事务会交给ptr对应的服务来处理；
+        // ptr是处理该事务的服务的服务在用户空间的本地Binder对象。
+        void    *ptr;   
+                      
+                        
+    } target;// 该事务的目标对象(即，该事务数据包是给该target来处理的)   
+     // 只有当事务是由Binder驱动传递给用户空间时，cookie才有意思，它的值是处理该事务的Server位于C++层的本地Binder对象
+    void        *cookie;   
+    unsigned int    code;   // 事务编码。如果是请求，则以BC_开头；如果是回复，则以BR_开头。
+ 
+    unsigned int    flags;
+    pid_t       sender_pid;
+    uid_t       sender_euid;
+    size_t      data_size;    // 数据大小
+    size_t      offsets_size; // 数据中包含的对象的个数
+ 
+    union {
+        struct {
+            const void  *buffer;
+            const void  *offsets;
+        } ptr;
+        uint8_t buf[8];
+    } data;                   // 数据
+};
+```
+
