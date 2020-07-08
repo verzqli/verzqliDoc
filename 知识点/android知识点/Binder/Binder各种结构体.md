@@ -1,3 +1,7 @@
+http://wangkuiwu.github.io/2014/09/02/Binder-Datastruct/#anchor1_8
+
+- 
+
 - ### binder_proc
 
 ```c++
@@ -97,9 +101,10 @@ struct binder_transaction_data {
     union {
         // 当binder_transaction_data是由用户空间的进程发送给Binder驱动时，
         // handle是该事务的发送目标在Binder驱动中的信息，即该事务会交给handle来处 理；
+         // handle的值是目标在Binder驱动中的Binder引用。
         size_t  handle; 
                        
-        // handle的值是目标在Binder驱动中的Binder引用。
+       
         // 当binder_transaction_data是有Binder驱动反馈给用户空间进程时，
         // ptr是该事务的发送目标在用户空间中的信息，即该事务会交给ptr对应的服务来处理；
         // ptr是处理该事务的服务的服务在用户空间的本地Binder对象。

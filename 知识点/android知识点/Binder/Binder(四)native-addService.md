@@ -341,7 +341,7 @@ static int binder_ioctl_write_read(struct file *filp,
         ...
     }
     if (bwr.read_size > 0) {
-        //读取自己队列的数据 【见小节】
+        //读取自己队列的数据
         ret = binder_thread_read(proc, thread, bwr.read_buffer,
              bwr.read_size,
              &bwr.read_consumed,
@@ -550,7 +550,7 @@ static struct binder_node *binder_get_node(struct binder_proc *proc,
 
 从binder_proc来根据binder指针ptr值，查询相应的binder_node。
 
-#### 2.4 binder_get_node
+#### 2.4 binder_new_node
 
 ```c++
 static struct binder_node *binder_new_node(struct binder_proc *proc,
@@ -579,7 +579,7 @@ static struct binder_node *binder_new_node(struct binder_proc *proc,
 }
 ```
 
-#### 2.5 binder_get_node
+#### 2.5 binder_get_ref_for_node
 
 ```java
 static struct binder_ref *binder_get_ref_for_node(struct binder_proc *proc,

@@ -752,11 +752,16 @@ finish:
 status_t IPCThreadState::talkWithDriver(bool doReceive)
 {
     binder_write_read bwr;
-
+    //判断当前是否在读取缓存，换言而之就是当前有别的进程正在和当前进程通信
+    // Is the read buffer empty?
     const bool needRead = mIn.dataPosition() >= mIn.dataSize();
+    // We don't want to write anything if we are still reading
+    // from data left in the input buffer and the caller
+    // has requested to read the next data.
     const size_t outAvail = (!doReceive || needRead) ? mOut.dataSize() : 0;
 
     bwr.write_size = outAvail;
+    //把mOut的数据给bwr的写缓存
     bwr.write_buffer = (uintptr_t)mOut.data();
 
     if (doReceive && needRead) {
@@ -775,7 +780,7 @@ status_t IPCThreadState::talkWithDriver(bool doReceive)
     bwr.read_consumed = 0;
     status_t err;
     do {
-        //ioctl执行binder读写操作，经过syscall，进入Binder驱动。调用Binder_ioctl【小节3.1】
+        //ioctl执行binder读写操作，经过syscall，进入Binder驱动。调用Binder_ioctl
         if (ioctl(mProcess->mDriverFD, BINDER_WRITE_READ, &bwr) >= 0)
             err = NO_ERROR;
         else
@@ -797,6 +802,37 @@ status_t IPCThreadState::talkWithDriver(bool doReceive)
         return NO_ERROR;
     }
     return err;
+}
+```
+
+[binder_write_read结构体](http://gityuan.com/2015/11/01/binder-driver/#binderwriteread)用来与Binder设备交换数据的结构, 通过ioctl与mDriverFD通信，是真正与Binder驱动进行数据读写交互的过程。
+
+ioctl()方法经过syscall最终调用到Binder_ioctl()方法.
+
+
+
+#### IPCThreadState::executeCommand
+
+```c++
+status_t IPCThreadState::executeCommand(int32_t cmd)
+{
+    BBinder* obj;
+    RefBase::weakref_type* refs;
+    status_t result = NO_ERROR;
+
+    switch ((uint32_t)cmd) {
+    case BR_ERROR: ...
+    case BR_OK: ...
+    case BR_ACQUIRE: ...
+    case BR_RELEASE: ...
+    case BR_INCREFS: ...
+    case BR_TRANSACTION: ... //Binder驱动向Server端发送消息
+    case BR_DEAD_BINDER: ...
+    case BR_CLEAR_DEATH_NOTIFICATION_DONE: ...
+    case BR_NOOP: ...
+    case BR_SPAWN_LOOPER: ... //创建新binder线程
+    default: ...
+    }
 }
 ```
 

@@ -325,7 +325,7 @@ void binder_loop(struct binder_state *bs, binder_handler func)
     struct binder_write_read bwr;
     ///读的缓存为32
     uint32_t readbuf[32];
-
+	//bwr.write_size=0，而bwr.read_size>0；表示只会从Binder驱动读取数据，而并不会向Binder驱动中写入数据
     bwr.write_size = 0;
     bwr.write_consumed = 0;
     bwr.write_buffer = 0;
