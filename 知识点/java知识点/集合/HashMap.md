@@ -262,6 +262,183 @@
         }
         return null;
     }
+  final void removeTreeNode(HashMap<K,V> map, Node<K,V>[] tab,
+                                  boolean movable) {
+            int n;
+            if (tab == null || (n = tab.length) == 0)
+                return;
+            int index = (n - 1) & hash;
+      		//first为这个桶的头结点
+            TreeNode<K,V> first = (TreeNode<K,V>)tab[index], root = first, rl;
+      		// succ为这个node的next节点，pred为前驱节点
+            TreeNode<K,V> succ = (TreeNode<K,V>)next, pred = prev;
+      		//如果前驱节点为null，说明这个节点为头结点，所以把下一个succ赋值给头结点
+            if (pred == null)
+                tab[index] = first = succ;
+            else
+                //否则让前驱的next节点跳过当前节点，直接链接next节点，达到删除的目的
+                pred.next = succ;
+      		//和前面的pred.next = succ;对应
+            if (succ != null)
+                succ.prev = pred;
+            if (first == null)
+                return;
+      		//拿到红黑树的root节点
+            if (root.parent != null)
+                root = root.root();
+            if (root == null || root.right == null ||
+                (rl = root.left) == null || rl.left == null) {
+                tab[index] = first.untreeify(map);  // too small
+                return;
+            }
+      		//上面这行判断是判断当前的红黑树数量是否在【0，6】之间，因为最极端的情况下是这种树
+      		//					x
+      		//				  /   \
+      		//				 x     x
+      		//                \   / \ 
+      		//                 x x   x
+      		//
+      		//也就是当小于6个节点时，把树转换为链表，其余树退化的地方只有在resize扩容的时候
+      		
+      //...下面是红黑树过程略过
+  }
 ```
 
-containvalue 为什么不便利数
+#### resize
+
+```java
+  final Node<K,V>[] resize() {
+        Node<K,V>[] oldTab = table;
+        int oldCap = (oldTab == null) ? 0 : oldTab.length;
+      	//原扩容阈值，就是容量乘以扩容系数(0.75)
+        int oldThr = threshold;
+        int newCap, newThr = 0;
+        if (oldCap > 0) {
+            //当大于2^30时，阈值直接设为Integer.MAX_VALUE;再返回原来的，再超过就报错
+            if (oldCap >= MAXIMUM_CAPACITY) {
+                threshold = Integer.MAX_VALUE;
+                return oldTab;
+            }
+            //如果两倍的新容量小于最大且原容量大于等于16，就扩容一杯
+            else if ((newCap = oldCap << 1) < MAXIMUM_CAPACITY(2^30) &&
+                     oldCap >= DEFAULT_INITIAL_CAPACITY(16))
+                newThr = oldThr << 1; // double threshold
+        }
+       //oldCap为空表示当前没有数据，oldThr大于0表示有扩容阈值
+       //然而扩容阈值是下面这行设置的，那么哪里还能设置呢？
+       //当调用了   public HashMap(int initialCapacity) 传入了我们自己的需要的初始容量时
+       //HashMap会先根据这个initialCapacity把容量调成2的次幂，在设置threshold
+       //所以这里的newCap就等于是我们自己设置的
+        else if (oldThr > 0) // initial capacity was placed in threshold
+            newCap = oldThr;
+        else {               // zero initial threshold signifies using defaults
+            //普通的HashMap初始化，设置默认的新容量和初始值
+            newCap = DEFAULT_INITIAL_CAPACITY;
+            newThr = (int)(DEFAULT_LOAD_FACTOR * DEFAULT_INITIAL_CAPACITY);
+        }
+       //对临界值做判断，确保其不为0，因为在上面第二种情况(oldThr > 0)，并没有计算newThr
+        if (newThr == 0) {
+            float ft = (float)newCap * loadFactor;
+            newThr = (newCap < MAXIMUM_CAPACITY && ft < (float)MAXIMUM_CAPACITY ?
+                      (int)ft : Integer.MAX_VALUE);
+        }
+        threshold = newThr;
+         //构造新表，初始化表中数据
+        @SuppressWarnings({"rawtypes","unchecked"})
+            Node<K,V>[] newTab = (Node<K,V>[])new Node[newCap];
+       //将刚创建的新表赋值给table
+        table = newTab;
+        if (oldTab != null) {
+             //遍历将原来table中的数据放到扩容后的新表中来
+            for (int j = 0; j < oldCap; ++j) {
+                Node<K,V> e;
+                if ((e = oldTab[j]) != null) {
+                    oldTab[j] = null;
+                    //没有链表Node节点，直接放到新的table中下标为【e.hash & (newCap - 1)】位置即可
+                    if (e.next == null)
+                        newTab[e.hash & (newCap - 1)] = e;
+                    else if (e instanceof TreeNode)
+                        ((TreeNode<K,V>)e).split(this, newTab, j, oldCap);
+                    else { // preserve order
+                        //如果e后面还有链表节点，则遍历e所在的链表，注意保证顺序
+                        Node<K,V> loHead = null, loTail = null;
+                        Node<K,V> hiHead = null, hiTail = null;
+                        Node<K,V> next;
+                        do {
+ /**
+  * newTab的容量是以前旧表容量的两倍,因为数组table下标并不是根据循环逐步递增
+  * 的，而是通过（table.length-1）& hash计算得到，因此扩容后，存放的位置就
+  * 可能发生变化，那么到底发生怎样的变化呢，就是由下面的算法得到.
+  *
+  * 通过e.hash & oldCap来判断节点位置通过再次hash算法后，是否会发生改变，
+  * 如果是小于原容量的数据下标，如下，那么在新容量中的下标也不会变
+  * e.hash = 13 二进制：0000 1101
+  * oldCap = 16 二进制：0001 0000
+  * newCap = 32 二进制：0010 0000
+  *  &运算：  0  二进制：0000 0000
+  * 结论：元素位置在扩容后不会发生改变
+  */
+                            next = e.next;
+                            if ((e.hash & oldCap) == 0) {
+                                if (loTail == null)
+                                    loHead = e;
+                                else
+                                    loTail.next = e;
+                                loTail = e;
+                            }
+                       /**
+                         * 如果原hash大于原容量小于新容量，那么下标数组就会改变
+                         * e.hash = 18 二进制：0001 0010
+                         * oldCap = 16 二进制：0001 0000
+                         * &运算： = 16 二进制：0001 0000
+                         * 结论：元素位置在扩容后会发生改变，那么如何改变呢？
+                         * newCap = 32 二进制：0010 0000
+                         * 通过(newCap-1)&hash
+                         * 即0001 1111 & 0001 0010 得0001 0010，16+2 = 18
+                         * 也即当hash在新容量中的下标为  oldCap+在oldCap容量中的下标          
+                         */
+                            else {
+                                if (hiTail == null)
+                                    hiHead = e;
+                                else
+                                    hiTail.next = e;
+                                hiTail = e;
+                            }
+                        } while ((e = next) != null);
+                        if (loTail != null) {
+                        /**
+                         * 若(e.hash & oldCap) == 0，下标不变，将原表某个下标的元素放到扩容表同样
+                         * 下标的位置上
+                         */
+                            loTail.next = null;
+                            newTab[j] = loHead;
+                        }
+                        /**
+                         * 若(e.hash & oldCap) != 0，将原表某个下标的元素放到扩容表中
+                         * [下标+增加的扩容量]的位置上
+                         */
+                        if (hiTail != null) {
+                            hiTail.next = null;
+                            newTab[j + oldCap] = hiHead;
+                        }
+                    }
+                }
+            }
+        }
+        return newTab;
+    }
+```
+
+扩容过程中有几个注意点
+
+- HashMap初始化的时候并不会创建桶数组table，而是在第一次put的时候调用resize初始化
+
+- 如果创建HashMap的时候传入了初始容量和扩容因子会把初始容量近似计算成2的次幂
+- 扩容过程中需要把原数组下标移到新位置，这里分成了low和hight两个类。（e.hash & oldCap) == 0表示的是hash值在[0，16）和[32,无限)之间，不等于0表示在[16,31]之间。
+  - low：表示第一种情况，这种情况下扩容后下标不变，因为当小于16时，不变，大于32时，除以32的余数也就是除以16的余数，所以下标不变
+  - high：第二种情况，这种情况的新下标=原容量+原容量的下标，例如18，在原容量中是2，在新容量中就是18
+
+- 52行的splite也是根据上面这种划分分配新的下表地址，然后判断树中节点的数量，小于6就取消树化。
+
+
+
