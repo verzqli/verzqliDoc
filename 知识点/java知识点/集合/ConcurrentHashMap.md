@@ -798,6 +798,7 @@ final Node<K,V>[] helpTransfer(Node<K,V>[] tab, Node<K,V > f) {
              //条件1：检查是对容量n的扩容，保证sizeCtl与n是一块修改好的
              //条件2与条件3：应该是进行sc的最小值或最大值判断。
              //条件4与条件5: 确保tranfer()中的nextTable相关初始化逻辑已走完。
+             // 步骤二
             if ((sc >>> RESIZE_STAMP_SHIFT) != rs || sc == rs + 1 ||
                 sc == rs + MAX_RESIZERS || transferIndex <= 0)
                 break;
@@ -877,7 +878,7 @@ rs即resizeStamp(n)，如当前容量为8时sc(sizeCtl)的计算过程如下：
 | :-----------: | :--------------: |
 | 容量n扩容标识 | 并行扩容线程数+1 |
 
-##### 步骤二
+###### 步骤二
 
 - 第一个判断：sizeCtl钱15位存储的是数组容量N，如果不一致说明发生了改变
 
@@ -887,6 +888,17 @@ rs即resizeStamp(n)，如当前容量为8时sc(sizeCtl)的计算过程如下：
 
 - 或者转移下标正在调整 （扩容结束）
 
+![image-20200805111226238](图库/ConcurrentHashMap/image-20200805111226238.png)### 问答：
+
+### 问答
+
+#### 问题一：为什么要分高低链，分开后怎么确定新点能找到对应位置
+
+区分高低位是用hashCode和原数组长度做&运算，如果为1，说明原hashCode肯定是大于原数组程度的，因为数组扩容时翻倍增长的，所以新地址肯定在原数组长度+原数组下标位置上，新的数字hashCode也是一样。
+
 https://www.codercto.com/a/57430.html
 
+https://blog.csdn.net/ZOKEKAI/article/details/90051567
+
   ​	
+
