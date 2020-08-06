@@ -9,7 +9,7 @@ JAVA使用 **锁**和**循环CAS**
 悲观锁会阻塞其他线程。乐观锁不会阻塞其他线程，如果发生冲突，采用死循环的方式一直重试，直到更新成功。
 
 **CAS，Compare and Swap**
- CAS的思想很简单：三个参数，一个当前内存值V、旧的预期值A、即将更新的值B，当且仅当预期值A和内存值V相同时，将内存值修改为B并返回true，否则什么都不做，并返回false。
+ CAS的思想很简单：三个参数，一个当前内存值obj，要比较的值在内存中的位置偏移量，也就是内存地址valueOffeset、旧的预期值expect、即将更新的值update，当且仅当预期值A和内存中偏移量中地址上的值相同时，将内存值修改为B并返回true，否则什么都不做，并返回false。
  JVM中的CAS操作正是利用了提到的处理器提供的CMPXCHG指令实现的；循环CAS实现的基本思路就是循环进行CAS操作直到成功为止；
  先来看看CAS在atomic类中的应用
 
@@ -69,9 +69,25 @@ Atomic类，它们实现了对**确认，更改再赋值**操作的原子性；�
     }
 ```
 
+这里不会产生死锁的原因：每次循环中var5是volatile值, 线程2更新变量的值后, 在线程1中volatile的var5读到的是最新值
+
 getIntVolatile通过偏移量获取到内存中变量值，compareAndSwapInt会比较获取的值与此时内存中的变量值是否相等，不相等则继续循环重复。整个过程利用CAS保证了对于value的修改的并发安全。
 
 上面我们说CAS利用了处理器的CMPXCHG指令，该指令操作的内存区域就会加锁，导致其他处理器不能同时访问它，保证原子性。
+
+```c++
+ 6 inline jint     Atomic::cmpxchg    (jint     exchange_value, volatile jint*     dest, jint     compare_value) {
+ 7   // alternative for InterlockedCompareExchange
+ 8   int mp = os::is_MP();
+ 9   __asm {
+10     mov edx, dest
+11     mov ecx, exchange_value
+12     mov eax, compare_value
+13     LOCK_IF_MP(mp)
+14     cmpxchg dword ptr [edx], ecx
+15   }
+16 }
+```
 
 **我们因为笨重放弃了synchronized，CAS是具有原子性的，于是利用循环 + CAS来确保线程安全**
 
@@ -173,3 +189,4 @@ false
 ```
 
 AtomicStampedReference的compareAndSet方法，多出了两个参数，分别是expectedStamp和newStamp，两个参数都是int型的，需要我们手动传入。
+

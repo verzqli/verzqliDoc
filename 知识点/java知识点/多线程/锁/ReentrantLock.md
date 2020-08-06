@@ -353,6 +353,22 @@ waitStatus是一个volatile修饰的int属性值，它有如下几个值：
         if (s != null)
             LockSupport.unpark(s.thread);
     }
+
+    private Node enq(Node node) {
+        for (;;) {
+            Node oldTail = tail;
+            if (oldTail != null) {
+                //putObject(object , offset , value); 
+                U.putObject(node, Node.PREV, oldTail);
+                if (compareAndSetTail(oldTail, node)) {
+                    oldTail.next = node;
+                    return oldTail;
+                }
+            } else {
+                initializeSyncQueue();
+            }
+        }
+    }
 ```
 
 #### 5.公平锁和飞公平锁的差异
@@ -396,6 +412,8 @@ waitStatus是一个volatile修饰的int属性值，它有如下几个值：
     }
 
 ```
+
+
 
 
 
