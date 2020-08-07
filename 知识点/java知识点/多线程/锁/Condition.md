@@ -59,7 +59,7 @@ Condition类能实现synchronized和wait、notify搭配的功能，另外比后�
                 throw new InterruptedException();
             //顾名思义，添加一个node到当前Condition对象的等待队列中【见1.1】
             Node node = addConditionWaiter();
-            // 释放锁，并保存释放前的锁状态（ownerThread的重入次数）【见1.3】
+            // 释放当前锁，保存锁状态（后面唤醒的时候需要用到），然后unpark释放同步队列的头结点【见1.3】
             int savedState = fullyRelease(node);
             int interruptMode = 0;
             //第一次循环时，由于结点不在同步队列中，因此会进入到while内部代码中，使用LockSupport.park使线程阻塞
@@ -130,20 +130,7 @@ Condition类能实现synchronized和wait、notify搭配的功能，另外比后�
             else if (interruptMode == REINTERRUPT)
                 selfInterrupt();
         }
-    private Node enq(Node node) {
-        for (;;) {
-            Node oldTail = tail;
-            if (oldTail != null) {
-                U.putObject(node, Node.PREV, oldTail);
-                if (compareAndSetTail(oldTail, node)) {
-                    oldTail.next = node;
-                    return oldTail;
-                }
-            } else {
-                initializeSyncQueue();
-            }
-        }
-    }
+
 ```
 
 首先能执行到while循环的线程肯定不是阻塞的，进入循环后第一步就将该线程进行阻塞，关键点来了，线程阻塞到这里之后后面的代码是不执行的，直到该线程被唤醒或者中断之后才会继续执行后面的代码。
@@ -158,13 +145,17 @@ Condition类能实现synchronized和wait、notify搭配的功能，另外比后�
 
 添加conditionWaiter节点到Condition对象的内部的waiter队列的队尾。
 
+这里的nextWaiter有三种情况：
 
+- nextWaiter==SHARED ，说明这个是共享锁，可以和其他线程共享锁
+- nextWaiter==null，这个是独占锁
+- nextWaiter==普通Condition Node 他就是普通的节点
 
 ```java
         private Node addConditionWaiter() {
             Node t = lastWaiter;
             // If lastWaiter is cancelled, clean out.
-            //如果有尾节点，但是节点状态不等于Node.CONDITION，说明被取消了，清除它，赋值一个新的尾巴节点。
+            //如果有尾节点，但是节点状态不等于Node.CONDITION，说明被取消了，清除它，赋值一个新的尾节点。
             if (t != null && t.waitStatus != Node.CONDITION(-2)) {
                 【见1.2】
                 unlinkCancelledWaiters();
@@ -215,7 +206,7 @@ Condition类能实现synchronized和wait、notify搭配的功能，另外比后�
 
 ##### 1.3 fullyRelease(Node)
 
-`fullyRelease`方法释放当前线程结点的资源，因为`ReentrantLock`只有一个资源，因此`ReentrantLock`创建的`Condition`的`await`方法相当于释放锁。
+`fullyRelease`方法释放当前线程结点的资源，因为`ReentrantLock`只有一个资源，因此`ReentrantLock`创建的`Condition`的`await`方法相当于释放锁。并且从同步队列中取出head后面第一个节点通过LockSupport.unpark()释放它
 
 ```java
 final int fullyRelease(Node node) {
@@ -323,9 +314,232 @@ final int fullyRelease(Node node) {
             LockSupport.unpark(node.thread);
         return true;
     }
+	//enq的作用就是把节点插入到同步队列尾部
+    private Node enq(Node node) {
+        for (;;) {
+            Node oldTail = tail;
+            if (oldTail != null) {
+                U.putObject(node, Node.PREV, oldTail);
+                if (compareAndSetTail(oldTail, node)) {
+                    oldTail.next = node;
+                    return oldTail;
+                }
+            } else {
+                initializeSyncQueue();
+            }
+        }
+    }
 ```
 
+#### 3.signalAll
 
+singAll的作用是唤醒该Condition上所有的Node，直接表现就是把等待队列所有的waiterNode全部插入到AQS同步队列的。signal每次只取头部一个，这里是全部取完。
+
+```java
+        public final void signalAll() {
+            if (!isHeldExclusively())
+                throw new IllegalMonitorStateException();
+            Node first = firstWaiter;
+            if (first != null)
+                doSignalAll(first);
+        }
+		//把condition队列中所有的节点全部插入到AQS中
+        private void doSignalAll(Node first) {
+            lastWaiter = firstWaiter = null;
+            do {
+                Node next = first.nextWaiter;
+                first.nextWaiter = null;
+                transferForSignal(first);
+                first = next;
+            } while (first != null);
+        }
+```
+
+### 总结
+
+Condition内部维护了一个双向链表，头：firstWaiter，尾：lastWaiter
+
+- 当调用await时，通过``addConditionWaiter``新建一个node添加到Condition内部的等待队列。
+- fullyRelease(node)->release(savedState)->tryRelease(arg)->unparkSuccessor(h)->LockSupport.unpark(s.thread)
+- tryRelease清空当前线程状态和资源ExclusiveOwnerThread也设为null
+- unparkSuccessor从同步队列中通过unpark唤醒结点（head后面一个），此时ExclusiveOwnerThread也设置成了这个新的线程
+- while (!isOnSyncQueue(node)) 判断当前线程节点在不在同步队列（AQS）中，然后调用LockSupport.park阻塞当前线程，等待被唤醒
+- 唤醒
+- 
+- 当一个condition调用signal时，先isHeldExclusively判断当前线程是否获得了锁，只有获得锁的线程才可以处理
+- 再判断condition内部的队列有没有节点，每一次signal都会处理一个节点，当没有节点就无效，也就是多次调用没效果
+- 取出等待队列的头结点（**和同步队列不同的是，这里的队列头结点可用**）然后添加到同步队列的尾部，因为unparkSuccessor是从同步队列的尾部开始取的
+- signalAll则是把所有的等待节点全部添加到同步队列中。
+
+```java
+
+public class MyClass {
+    ReentrantLock lock = new ReentrantLock();
+    Condition conditionA = lock.newCondition();
+    Condition conditionB = lock.newCondition();
+    Condition conditionC = lock.newCondition();
+
+    public static void main(String[] args) throws InterruptedException {
+        MyClass myClass = new MyClass();
+        Thread a = myClass.new ThreadA();
+        Thread b = myClass.new ThreadB();
+        Thread c = myClass.new ThreadC();
+        Thread d = myClass.new ThreadD();
+        a.start();
+        b.start();
+        c.start();
+        d.start();
+
+    }
+
+
+    class ThreadD extends Thread {
+        @Override
+        public void run() {
+            lock.lock();
+            conditionB.signal();
+            conditionA.signal();
+            conditionA.signal();
+            conditionA.signal();
+            lock.unlock();
+
+        }
+    }
+
+    class ThreadA extends Thread {
+        @Override
+        public void run() {
+            lock.lock();
+            try {
+                System.out.println("A await");
+                conditionA.await();
+                System.out.println("A 苏醒");
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            lock.unlock();
+        }
+    }
+
+    class ThreadB extends Thread {
+        @Override
+        public void run() {
+            lock.lock();
+            try {
+                System.out.println("B await");
+                conditionB.await();
+                System.out.println("B 苏醒 A await");
+                conditionA.await();
+                System.out.println("B 苏醒 A await A 苏醒");
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+
+            lock.unlock();
+        }
+    }
+
+    class ThreadC extends Thread {
+        @Override
+        public void run() {
+            lock.lock();
+            try {
+                System.out.println("C await");
+                conditionC.await();
+                System.out.println("C 苏醒");
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+
+            lock.unlock();
+        }
+    }
+}
+
+//这里的输出结果是：
+A await
+B await
+C await
+B 苏醒 A await
+A 苏醒
+```
+
+为什么这里的 conditionA.signal();没有苏醒B中的后续，因为ThreadB中conditionA.await();是在ThreadD中unlock之后唤醒了B之后，B又阻塞在conditionA.await()这里，想唤醒这里，需要再去开一个线程调用conditionA.signal。
+
+此时的conditionA内部队列数量变化为1-0-1；
+
+如果把ThreadC中的conditionC改为conditionA，那么输出结果为：
+
+```java
+A await
+B await
+C await
+B 苏醒 A await
+A 苏醒
+C 苏醒
+```
+
+可以看到，ThreadC和ThreadA中conditionA.await();是同一批，所以此时队列中数量为2，但是这样还是唤醒不了B中的conditionA.await();
+
+通俗一点说就是这两次await不是同一批的，B中的await是在唤醒AC后重新再阻塞的。
+
+如果把三个conditionA.signal()换成conditionA.signalAll()，结果和上面一样，也是唤醒不了B中的conditionA.await()。
+
+### 双线程打印：
+
+```java
+  ReentrantLock lock = new ReentrantLock();
+    Condition conditionA = lock.newCondition();
+    Condition conditionB = lock.newCondition();
+
+
+    public static void main(String[] args) throws InterruptedException {
+        MyClass myClass = new MyClass();
+        Thread a = myClass.new ThreadA();
+        Thread b = myClass.new ThreadB();
+
+        b.start();
+        Thread.sleep(11);
+        a.start();
+    }
+
+    class ThreadA extends Thread {
+        @Override
+        public void run() {
+            lock.lock();
+            for (int i = 1; i < 100; i+=2) {
+                System.out.println("线程A   "+i);
+                conditionB.signal();
+                try {
+                    conditionA.await();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+
+            }
+            lock.unlock();
+        }
+    }
+
+    class ThreadB extends Thread {
+        @Override
+        public void run() {
+            lock.lock();
+            for (int i = 0; i < 100; i+=2) {
+                System.out.println("线程B   "+i);
+                try {
+                    conditionB.await();
+                    conditionA.signal();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+
+            lock.unlock();
+        }
+    }
+
+```
 
 
 
@@ -333,4 +547,8 @@ final int fullyRelease(Node node) {
 
 - 如果抛出InterruptedException，则外界必须处理（捕获或继续外抛）。
 - 如果调用Thread#interrupt()，则仅设置中断标志。JDK提供的某些阻塞方法会处理该标志，详见Javadoc；但用户自己实现的方法，是否会处理该标志，处理是否及时，都无法做出保证。
+
+
+
+
 
