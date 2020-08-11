@@ -357,7 +357,7 @@ singAll的作用是唤醒该Condition上所有的Node，直接表现就是把等
 
 ### 总结
 
-Condition内部维护了一个双向链表，头：firstWaiter，尾：lastWaiter
+Condition内部维护了一个双向链表，头：firstWaiter，尾：lastWaiter,condition中队列中的作用是在多个线程中调用了await之后，signal根据先后去唤醒对应线程
 
 - 当调用await时，通过``addConditionWaiter``新建一个node添加到Condition内部的等待队列。
 - fullyRelease(node)->release(savedState)->tryRelease(arg)->unparkSuccessor(h)->LockSupport.unpark(s.thread)
@@ -547,6 +547,8 @@ C 苏醒
 
 - 如果抛出InterruptedException，则外界必须处理（捕获或继续外抛）。
 - 如果调用Thread#interrupt()，则仅设置中断标志。JDK提供的某些阻塞方法会处理该标志，详见Javadoc；但用户自己实现的方法，是否会处理该标志，处理是否及时，都无法做出保证。
+
+
 
 
 
