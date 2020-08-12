@@ -130,5 +130,7 @@ get方法通过拿到当前线程的ThreadLocalMap，然后以当前的threadloc
 
 就像这里，用一个新的ThreadLocal类去调用get，此时的Thread里面的ThreadLocalMap是不为null的，但是该ThreadLocal类作为key在这个map中的值是不存在的，所以拿不到值。
 
+类似于N个线程对应一个ThreadLocal对象，把这个对象当key然后存值，然后这些线程对于这个threadLocal可以拿到对应的值，换一个就拿不到。
 
+Thread里面的sThreadlocals并不是ThreadLocal，而是存储值的ThreadLocalMap
 

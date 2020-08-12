@@ -524,6 +524,25 @@ handler主要用来收发消息，发消息的各种sendXXX，handleMessage接�
 
 可以看到所有的发送消息最后都是调用``MessageQueue``的``enqueueMessage()``
 
+Handler里面包含``Looper``和``MessageQueue``，通过``Looper.myLooper();``得到``mLooper``，通过``mLooper``得到``mQueue``.
+
+```java
+    public Handler(Callback callback, boolean async) {
+    ...
+        mLooper = Looper.myLooper();
+        if (mLooper == null) {
+            throw new RuntimeException(
+                "Can't create handler inside thread " + Thread.currentThread()
+                        + " that has not called Looper.prepare()");
+        }
+        mQueue = mLooper.mQueue;
+        mCallback = callback;
+        mAsynchronous = async;
+    }
+```
+
+
+
 ##### 2.3.1 sendMessage
 
 ```java
@@ -725,4 +744,136 @@ HandlerActionQueue记录下要做的工作后，等到这个View attach到窗口
         }
    }
 ```
+
+#### 2.4 Message
+
+Message就是Handler发送的消息，包含了此时传递的数据，信息和触发时间，发送后到达MessageQueue循环
+
+```java
+public final class Message implements Parcelable {
+   	// 消息类型
+    public int what;
+	//arg1 arg2都是消息参数
+    public int arg1;
+    public int arg2;
+	// 消息内容
+    public Object obj;
+	//消息状态：使用中
+    /*package*/ static final int FLAG_IN_USE = 1 << 0;
+
+    //消息状态：异步消息
+    /*package*/ static final int FLAG_ASYNCHRONOUS = 1 << 1;	
+	//消息状态
+    /*package*/ int flags;
+	//触发时间
+    /*package*/ long when;
+	// 传递携带的数据
+    /*package*/ Bundle data;
+	//消息处理的target
+    /*package*/ Handler target;
+	//消息回调处理的接口
+    /*package*/ Runnable callback;
+	//吓一跳消息
+    // sometimes we store linked lists of these things
+    /*package*/ Message next;
+	//消息池
+    private static Message sPool;
+    private static int sPoolSize = 0;
+	//消息池最大为50
+    private static final int MAX_POOL_SIZE = 50;
+    ...
+}
+```
+
+##### 2.4.1 handler.obtainMessage
+
+通常我们使用消息都是使用handler.obtainMessage
+
+```java
+    public final Message obtainMessage()
+    {
+        return Message.obtain(this);
+    }
+    public static Message obtain(Handler h) {
+        Message m = obtain();
+        m.target = h;
+
+        return m;
+    }
+    public static Message obtain() {
+        synchronized (sPoolSync) {
+            if (sPool != null) {
+                Message m = sPool;
+                sPool = m.next;
+                m.next = null;
+                m.flags = 0; // clear in-use flag
+                sPoolSize--;
+                return m;
+            }
+        }
+        return new Message();
+    }
+```
+
+可以看到，当消息池不为null时，取出一个消息，清除它的状态，并断开这个消息连接，然后返回，如果当前消息池空了（等于null），那么直接创建一个Message。
+
+##### 2.4.2 Message.recycle
+
+```java
+    public void recycle() {
+        if (isInUse()) {
+            if (gCheckRecycle) {
+                throw new IllegalStateException("This message cannot be recycled because it "
+                        + "is still in use.");
+            }
+            return;
+        }
+        recycleUnchecked();
+    }
+    void recycleUnchecked() {
+        // Mark the message as in use while it remains in the recycled object pool.
+        // Clear out all other details.
+        // 将标记设为IN_USE,然后清除其他数据
+        flags = FLAG_IN_USE;
+        what = 0;
+        arg1 = 0;
+        arg2 = 0;
+        obj = null;
+        replyTo = null;
+        sendingUid = -1;
+        when = 0;
+        target = null;
+        callback = null;
+        data = null;
+
+        synchronized (sPoolSync) {
+            if (sPoolSize < MAX_POOL_SIZE) {
+                // 插到消息池链表表头
+                next = sPool;
+                sPool = this;
+                sPoolSize++;
+            }
+        }
+    }
+
+```
+
+从上面可以看到，obtain时会清空标志，所以这里把flag设为使用中，防止再回收的过程中又被拿去使用，导致数据混乱，清空数据后把消息插到消息池链表的表头，等待被获取。
+
+
+
+### 总结
+
+![image-20200812104652231](图库/Handler/image-20200812104652231.png)
+
+- Handler通过sendMessage()发送Message到MessageQueue队列；
+- Looper通过loop()，不断提取出达到触发条件的Message，并将Message交给target来处理；
+- 经过dispatchMessage()后，交回给Handler的handleMessage()来进行相应地处理。
+- 将Message加入MessageQueue时，处往管道写入字符，可以会唤醒loop线程；如果MessageQueue中没有Message，并处于Idle状态，则会执行IdelHandler接口中的方法，往往用于做一些清理性地工作。
+
+**消息分发的优先级：**
+
+1. Message的回调方法：`message.callback.run()`，优先级最高；
+2. Handler的回调方法：`Handler.mCallback.handleMessage(msg)`，优先级仅次于1；
+3. Handler的默认方法：`Handler.handleMessage(msg)`，优先级最低。
 
